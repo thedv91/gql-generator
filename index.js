@@ -209,9 +209,11 @@ const generateFile = (obj, description) => {
       const queryResult = generateQuery(type, description);
       const varsToTypesStr = getVarsToTypesStr(queryResult.argumentsDict);
       let query = queryResult.queryStr;
-      query = `import gql from 'graphql-tag';\n export const ${capitalize(
+      query = `import { DocumentNode } from 'graphql';\nimport gql from 'graphql-tag';\n export const ${capitalize(
         type
-      )} = gql\`${description.toLowerCase()} ${type}${varsToTypesStr ? `(${varsToTypesStr})` : ''} {\n${query}\n}\``;
+      )}: DocumentNode = gql\`${description.toLowerCase()} ${type}${
+        varsToTypesStr ? `(${varsToTypesStr})` : ''
+      } {\n${query}\n}\``;
       fs.writeFileSync(path.join(writeFolder, `./${type}${extFile}`), query);
       // indexJs += `module.exports.${type} = fs.readFileSync(path.join(__dirname, '${type}.ts'), 'utf8');\n`;
 
