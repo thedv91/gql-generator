@@ -220,14 +220,14 @@ const generateFile = (obj, description) => {
     switch(type){
       case 'Mutation':
         return `
-        export const ${optionName} = MutationHookOptions<any, any>;\n
+        export type ${optionName} = MutationHookOptions<any, any>;\n
         export const use${toPascalCase(originalQueryName)}${type} = (options?: ${optionName} ) => {\n
           return useMutation<any,any>(${queryName}, options);
        };`;
       case 'Query':
         return `
-        export const ${optionName} = QueryHookOptions<any, any>;\n
-        export const ${toPascalCase(originalQueryName)}Lazy${type}Options = LazyQueryHookOptions<any, any>;\n
+        export type ${optionName} = QueryHookOptions<any, any>;\n
+        export type ${toPascalCase(originalQueryName)}Lazy${type}Options = LazyQueryHookOptions<any, any>;\n
         export const use${toPascalCase(originalQueryName)}${type} = (options?: ${optionName}) => {\n
           return useQuery<any,any>(${queryName}, options);
        };\nexport const use${toPascalCase(originalQueryName)}Lazy${type} = (options?: ${toPascalCase(originalQueryName)}Lazy${type}Options) => {\n
