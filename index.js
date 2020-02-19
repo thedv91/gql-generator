@@ -4,11 +4,14 @@ const path = require('path');
 const program = require('commander');
 const { Source, buildSchema } = require('graphql');
 const del = require('del');
-const { toSnakeCase, toPascalCase }= require('./utils')
+const { toSnakeCase, toPascalCase } = require('./utils');
 
 program
   .option('--schemaFilePath [value]', 'path of your graphql schema file')
   .option('--destDirPath [value]', 'dir you want to store the generated queries')
+  .option('--apolloVersion [value]', 'apolloVersion default is 2')
+  .option('--enableApollo [value]', 'enableApollo')
+  .option('--enableOriginalQuery [value]', 'enableOriginalQuery')
   .option('--target [value]', 'typescript|javascript')
   .option('--depthLimit [value]', 'query depth you want to limit(The default is 100)')
   .option('-C, --includeDeprecatedFields [value]', 'Flag to include deprecated fields (The default is to exclude)')
@@ -25,6 +28,9 @@ const {
   schemaFilePath,
   destDirPath,
   depthLimit = 100,
+  apolloVersion = 2,
+  enableApollo = true,
+  enableOriginalQuery = true,
   includeDeprecatedFields = false,
   target = 'typescript'
 } = program;
@@ -204,20 +210,30 @@ const generateFile = (obj, description) => {
     if (err.code !== 'EEXIST') throw err;
   }
 
-  function generateApolloHookImport(type){
-    switch(type){
-      case 'Mutation':
-        return `import { useMutation, MutationHookOptions } from '@apollo/react-hooks';\n`;
-      case 'Query':
+  function generateApolloHookImport(type) {
+    switch (apolloVersion) {
+      case 3:
+        return;
+    }
+    switch (type) {
+      case 'Mutation': {
+        if (apolloVersion === 3) return `import { useMutation, MutationHookOptions } from '@apollo/client';\n`;
+        else return `import { useMutation, MutationHookOptions } from '@apollo/react-hooks';\n`;
+      }
+
+      case 'Query': {
+        if (apolloVersion === 3)
+          return `import { useQuery, QueryHookOptions, useLazyQuery, LazyQueryHookOptions } from '@apollo/client';\n`;
         return `import { useQuery, QueryHookOptions, useLazyQuery, LazyQueryHookOptions } from '@apollo/react-hooks';\n`;
+      }
       default:
-        return ''; 
+        return '';
     }
   }
 
-  function generateApolloHook(originalQueryName, queryName, type){
+  function generateApolloHook(originalQueryName, queryName, type) {
     const optionName = `${toPascalCase(originalQueryName)}${type}Options`;
-    switch(type){
+    switch (type) {
       case 'Mutation':
         return `
         export type ${optionName} = MutationHookOptions<any, any>;\n
@@ -230,11 +246,13 @@ const generateFile = (obj, description) => {
         export type ${toPascalCase(originalQueryName)}Lazy${type}Options = LazyQueryHookOptions<any, any>;\n
         export const use${toPascalCase(originalQueryName)}${type} = (options?: ${optionName}) => {\n
           return useQuery<any,any>(${queryName}, options);
-       };\nexport const use${toPascalCase(originalQueryName)}Lazy${type} = (options?: ${toPascalCase(originalQueryName)}Lazy${type}Options) => {\n
+       };\nexport const use${toPascalCase(originalQueryName)}Lazy${type} = (options?: ${toPascalCase(
+          originalQueryName
+        )}Lazy${type}Options) => {\n
         return useLazyQuery<any,any>(${queryName}, options);
      };`;
       default:
-        return ''; 
+        return '';
     }
   }
 
@@ -245,12 +263,18 @@ const generateFile = (obj, description) => {
       const queryResult = generateQuery(type, description);
       const varsToTypesStr = getVarsToTypesStr(queryResult.argumentsDict);
       let query = queryResult.queryStr;
-      const originalQueryName = toSnakeCase(type).toUpperCase()
-      const queryName = `${originalQueryName}_${description.toUpperCase()}`
-      query = `import { DocumentNode } from 'graphql';\nimport gql from 'graphql-tag';\n${generateApolloHookImport(description)} export const ${queryName}: DocumentNode = gql\`${description.toLowerCase()} ${type}${
+      const originalQueryName = toSnakeCase(type).toUpperCase();
+      const queryName = `${originalQueryName}_${description.toUpperCase()}`;
+      query = `import { DocumentNode } from 'graphql';\nimport gql from 'graphql-tag';\n${generateApolloHookImport(
+        description
+      )} export const ${queryName}: DocumentNode = gql\`${description.toLowerCase()} ${type}${
         varsToTypesStr ? `(${varsToTypesStr})` : ''
       } {\n${query}\n}\`;\n ${generateApolloHook(originalQueryName, queryName, description)}`;
-      fs.writeFileSync(path.join(writeFolder, `./${type}${extFile}`), query);
+      if (enableApollo) fs.writeFileSync(path.join(writeFolder, `./${type}${extFile}`), query);
+
+      let gqlQuery = queryResult.queryStr;
+      gqlQuery = `${description.toLowerCase()} ${type}${varsToTypesStr ? `(${varsToTypesStr})` : ''}{\n${gqlQuery}\n}`;
+      if (enableOriginalQuery) fs.writeFileSync(path.join(writeFolder, `./${type}.gql`), gqlQuery);
     }
   });
 };
