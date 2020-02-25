@@ -9,11 +9,11 @@ const { toSnakeCase, toPascalCase } = require('./utils');
 program
   .option('--schemaFilePath [value]', 'path of your graphql schema file')
   .option('--destDirPath [value]', 'dir you want to store the generated queries')
-  .option('--apolloVersion [value]', 'apolloVersion default is 2')
+  .option('--apolloVersion [value]', 'apolloVersion default is 2', parseInt)
   .option('--enableApollo [value]', 'enableApollo')
   .option('--enableOriginalQuery [value]', 'enableOriginalQuery')
   .option('--target [value]', 'typescript|javascript')
-  .option('--depthLimit [value]', 'query depth you want to limit(The default is 100)')
+  .option('--depthLimit [value] <number>', 'query depth you want to limit(The default is 100)', parseInt)
   .option('-C, --includeDeprecatedFields [value]', 'Flag to include deprecated fields (The default is to exclude)')
   .parse(process.argv);
 
@@ -29,8 +29,8 @@ const {
   destDirPath,
   depthLimit = 100,
   apolloVersion = 2,
-  enableApollo = true,
-  enableOriginalQuery = true,
+  enableApollo = false,
+  enableOriginalQuery = false,
   includeDeprecatedFields = false,
   target = 'typescript'
 } = program;
@@ -211,10 +211,6 @@ const generateFile = (obj, description) => {
   }
 
   function generateApolloHookImport(type) {
-    switch (apolloVersion) {
-      case 3:
-        return;
-    }
     switch (type) {
       case 'Mutation': {
         if (apolloVersion === 3) return `import { useMutation, MutationHookOptions } from '@apollo/client';\n`;
