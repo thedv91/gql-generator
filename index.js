@@ -4,37 +4,26 @@ const path = require('path');
 const program = require('commander');
 const { Source, buildSchema } = require('graphql');
 const del = require('del');
-const { toSnakeCase, toPascalCase } = require('./utils');
 
 program
   .option('--schemaFilePath [value]', 'path of your graphql schema file')
   .option('--destDirPath [value]', 'dir you want to store the generated queries')
-  .option('--apolloVersion [value]', 'apolloVersion default is 2', parseInt)
-  .option('--enableApollo [value]', 'enableApollo')
-  .option('--enableOriginalQuery [value]', 'enableOriginalQuery')
-  .option('--target [value]', 'typescript|javascript')
-  .option('--depthLimit [value] <number>', 'query depth you want to limit(The default is 100)', parseInt)
+  .option('--rootQuery [value]', 'Root Query name')
+  .option('--rootMutation [value]', 'Root Mutation name')
+  .option('--rootSubscription [value]', 'Root Subscription name')
+  .option('--depthLimit [value]', 'query depth you want to limit(The default is 100)')
   .option('-C, --includeDeprecatedFields [value]', 'Flag to include deprecated fields (The default is to exclude)')
   .parse(process.argv);
-
-function capitalize(s) {
-  if (typeof s !== 'string') {
-    return '';
-  }
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
 
 const {
   schemaFilePath,
   destDirPath,
   depthLimit = 100,
-  apolloVersion = 2,
-  enableApollo = false,
-  enableOriginalQuery = false,
   includeDeprecatedFields = false,
-  target = 'typescript'
+  rootQuery = 'Query',
+  rootSubscription = 'Subscription',
+  rootMutation = 'Mutation',
 } = program;
-const extFile = target === 'typescript' ? '.ts' : '.js';
 const typeDef = fs.readFileSync(schemaFilePath, 'utf-8');
 const source = new Source(typeDef);
 const gqlSchema = buildSchema(source);
@@ -50,7 +39,7 @@ path
     }
     return path.join(before, cur + path.sep);
   }, '');
-// let indexJsExportAll = '';
+let indexJsExportAll = '';
 
 /**
  * Compile arguments dictionary for a field
@@ -77,7 +66,7 @@ const getFieldArgsDict = (field, duplicateArgCounts, allArgsDict = {}) =>
  * Generate variables string
  * @param dict dictionary of arguments
  */
-const getArgsToVarsStr = dict =>
+const getArgsToVarsStr = (dict) =>
   Object.entries(dict)
     .map(([varName, arg]) => `${arg.name}: $${varName}`)
     .join(', ');
@@ -86,7 +75,7 @@ const getArgsToVarsStr = dict =>
  * Generate types string
  * @param dict dictionary of arguments
  */
-const getVarsToTypesStr = dict =>
+const getVarsToTypesStr = (dict) =>
   Object.entries(dict)
     .map(([varName, arg]) => `$${varName}: ${arg.type}`)
     .join(', ');
@@ -122,17 +111,17 @@ const generateQuery = (
     crossReferenceKeyList.push(crossReferenceKey);
     const childKeys = Object.keys(curType.getFields());
     childQuery = childKeys
-      .filter(fieldName => {
+      .filter((fieldName) => {
         /* Exclude deprecated fields */
         const fieldSchema = gqlSchema.getType(curType).getFields()[fieldName];
         return includeDeprecatedFields || !fieldSchema.isDeprecated;
       })
       .map(
-        cur =>
+        (cur) =>
           generateQuery(cur, curType, curName, argumentsDict, duplicateArgCounts, crossReferenceKeyList, curDepth + 1)
             .queryStr
       )
-      .filter(cur => cur)
+      .filter((cur) => cur)
       .join('\n');
   }
 
@@ -161,7 +150,7 @@ const generateQuery = (
         const valueType = gqlSchema.getType(valueTypeName);
         const unionChildQuery = Object.keys(valueType.getFields())
           .map(
-            cur =>
+            (cur) =>
               generateQuery(
                 cur,
                 valueType,
@@ -172,7 +161,7 @@ const generateQuery = (
                 curDepth + 2
               ).queryStr
           )
-          .filter(cur => cur)
+          .filter((cur) => cur)
           .join('\n');
         queryStr += `${fragIndent}... on ${valueTypeName} {\n${unionChildQuery}\n${fragIndent}}\n`;
       }
@@ -188,17 +177,21 @@ const generateQuery = (
  * @param description description of the current object
  */
 const generateFile = (obj, description) => {
-  // let indexJs = "const fs = require('fs');\nconst path = require('path');\n\n";
+  let indexJs = "const fs = require('fs');\nconst path = require('path');\n\n";
   let outputFolderName;
+  let q;
   switch (description) {
-    case 'Mutation':
+    case rootMutation:
       outputFolderName = 'mutations';
+      q = 'Mutation';
       break;
-    case 'Query':
+    case rootQuery:
       outputFolderName = 'queries';
+      q = 'Query';
       break;
-    case 'Subscription':
+    case rootSubscription:
       outputFolderName = 'subscriptions';
+      q = 'Subscription';
       break;
     default:
       console.log('[gqlg warning]:', 'description is required');
@@ -209,88 +202,38 @@ const generateFile = (obj, description) => {
   } catch (err) {
     if (err.code !== 'EEXIST') throw err;
   }
-
-  function generateApolloHookImport(type) {
-    switch (type) {
-      case 'Mutation': {
-        if (apolloVersion === 3) return `import { useMutation, MutationHookOptions } from '@apollo/client';\n`;
-        else return `import { useMutation, MutationHookOptions } from '@apollo/react-hooks';\n`;
-      }
-
-      case 'Query': {
-        if (apolloVersion === 3)
-          return `import { useQuery, QueryHookOptions, useLazyQuery, LazyQueryHookOptions } from '@apollo/client';\n`;
-        return `import { useQuery, QueryHookOptions, useLazyQuery, LazyQueryHookOptions } from '@apollo/react-hooks';\n`;
-      }
-      default:
-        return '';
-    }
-  }
-
-  function generateApolloHook(originalQueryName, queryName, type) {
-    const optionName = `${toPascalCase(originalQueryName)}${type}Options`;
-    switch (type) {
-      case 'Mutation':
-        return `
-        export type ${optionName} = MutationHookOptions<any, any>;\n
-        export const use${toPascalCase(originalQueryName)}${type} = (options?: ${optionName} ) => {\n
-          return useMutation<any,any>(${queryName}, options);
-       };`;
-      case 'Query':
-        return `
-        export type ${optionName} = QueryHookOptions<any, any>;\n
-        export type ${toPascalCase(originalQueryName)}Lazy${type}Options = LazyQueryHookOptions<any, any>;\n
-        export const use${toPascalCase(originalQueryName)}${type} = (options?: ${optionName}) => {\n
-          return useQuery<any,any>(${queryName}, options);
-       };\nexport const use${toPascalCase(originalQueryName)}Lazy${type} = (options?: ${toPascalCase(
-          originalQueryName
-        )}Lazy${type}Options) => {\n
-        return useLazyQuery<any,any>(${queryName}, options);
-     };`;
-      default:
-        return '';
-    }
-  }
-
-  Object.keys(obj).forEach(type => {
+  Object.keys(obj).forEach((type) => {
     const field = gqlSchema.getType(description).getFields()[type];
     /* Only process non-deprecated queries/mutations: */
     if (includeDeprecatedFields || !field.isDeprecated) {
       const queryResult = generateQuery(type, description);
       const varsToTypesStr = getVarsToTypesStr(queryResult.argumentsDict);
       let query = queryResult.queryStr;
-      const originalQueryName = toSnakeCase(type).toUpperCase();
-      const queryName = `${originalQueryName}_${description.toUpperCase()}`;
-      query = `import { DocumentNode } from 'graphql';\nimport gql from 'graphql-tag';\n${generateApolloHookImport(
-        description
-      )} export const ${queryName}: DocumentNode = gql\`${description.toLowerCase()} ${type}${
-        varsToTypesStr ? `(${varsToTypesStr})` : ''
-      } {\n${query}\n}\`;\n ${generateApolloHook(originalQueryName, queryName, description)}`;
-      if (enableApollo) fs.writeFileSync(path.join(writeFolder, `./${type}${extFile}`), query);
-
-      let gqlQuery = queryResult.queryStr;
-      gqlQuery = `${description.toLowerCase()} ${type}${varsToTypesStr ? `(${varsToTypesStr})` : ''}{\n${gqlQuery}\n}`;
-      if (enableOriginalQuery) fs.writeFileSync(path.join(writeFolder, `./${type}.gql`), gqlQuery);
+      query = `${q.toLowerCase()} ${type}${varsToTypesStr ? `(${varsToTypesStr})` : ''}{\n${query}\n}`;
+      fs.writeFileSync(path.join(writeFolder, `./${type}.gql`), query);
+      indexJs += `module.exports.${type} = fs.readFileSync(path.join(__dirname, '${type}.gql'), 'utf8');\n`;
     }
   });
+  fs.writeFileSync(path.join(writeFolder, 'index.js'), indexJs);
+  indexJsExportAll += `module.exports.${outputFolderName} = require('./${outputFolderName}');\n`;
 };
 
 if (gqlSchema.getMutationType()) {
-  generateFile(gqlSchema.getMutationType().getFields(), 'Mutation');
+  generateFile(gqlSchema.getMutationType().getFields(), rootMutation);
 } else {
   console.log('[gqlg warning]:', 'No mutation type found in your schema');
 }
 
 if (gqlSchema.getQueryType()) {
-  generateFile(gqlSchema.getQueryType().getFields(), 'Query');
+  generateFile(gqlSchema.getQueryType().getFields(), rootQuery);
 } else {
   console.log('[gqlg warning]:', 'No query type found in your schema');
 }
 
 if (gqlSchema.getSubscriptionType()) {
-  generateFile(gqlSchema.getSubscriptionType().getFields(), 'Subscription');
+  generateFile(gqlSchema.getSubscriptionType().getFields(), rootSubscription);
 } else {
   console.log('[gqlg warning]:', 'No subscription type found in your schema');
 }
 
-// fs.writeFileSync(path.join(destDirPath, 'index.js'), indexJsExportAll);
+fs.writeFileSync(path.join(destDirPath, 'index.js'), indexJsExportAll);
